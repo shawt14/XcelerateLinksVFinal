@@ -416,6 +416,11 @@ namespace APIPSI16.Controllers
             });
 
             await _db.SaveChangesAsync();
+
+            // When applicant accepts the offer the position is filled — remove the opportunity
+            if (app.Status == 4 && app.OpportunityId > 0)
+                await DeleteOpportunityIfFilledAsync(app.OpportunityId);
+
             return Ok(app);
         }
 
@@ -508,6 +513,11 @@ namespace APIPSI16.Controllers
             });
 
             await _db.SaveChangesAsync();
+
+            // When employer marks someone as hired the position is filled — remove the opportunity
+            if (newStatus == 4 && app.OpportunityId > 0)
+                await DeleteOpportunityIfFilledAsync(app.OpportunityId);
+
             return Ok(app);
         }
 
@@ -575,6 +585,56 @@ namespace APIPSI16.Controllers
                 _ => "Unknown"
             };
         }
+
+        /// <summary>
+        /// Cascade-deletes an opportunity and all its dependent records (interview rounds,
+        /// job applications, employer candidate history references).
+        /// Failures are swallowed and logged so that the calling hire action is unaffected.
+        /// </summary>
+        private async Task DeleteOpportunityIfFilledAsync(int opportunityId)
+        {
+            try
+            {
+                var opportunity = await _db.Opportunities.FindAsync(opportunityId);
+                if (opportunity == null) return;
+
+                // 1. Delete interview rounds for all applications on this opportunity
+                var applicationIds = await _db.JobApplications
+                    .Where(a => a.OpportunityId == opportunityId)
+                    .Select(a => a.JobApplicationId)
+                    .ToListAsync();
+
+                if (applicationIds.Count > 0)
+                {
+                    var rounds = await _db.InterviewRounds
+                        .Where(r => applicationIds.Contains(r.JobApplicationId))
+                        .ToListAsync();
+                    _db.InterviewRounds.RemoveRange(rounds);
+
+                    var applications = await _db.JobApplications
+                        .Where(a => a.OpportunityId == opportunityId)
+                        .ToListAsync();
+                    _db.JobApplications.RemoveRange(applications);
+                }
+
+                // 2. Null-out OpportunityId on employer candidate history rows
+                var histories = await _db.EmployerCandidateHistories
+                    .Where(h => h.OpportunityId == opportunityId)
+                    .ToListAsync();
+                foreach (var h in histories)
+                    h.OpportunityId = null;
+
+                _db.Opportunities.Remove(opportunity);
+                await _db.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "Failed to auto-delete filled opportunity {OpportunityId} — the hire action was already saved.",
+                    opportunityId);
+            }
+        }
+
     }
 
     public class ApplicantResponseDto

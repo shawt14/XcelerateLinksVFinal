@@ -246,7 +246,11 @@ namespace XcelerateLinks.Mvc.Controllers
             var client = CreateAuthorizedClient();
             var resp = await client.DeleteAsync($"api/opportunities/{id}");
             if (!resp.IsSuccessStatusCode)
+            {
+                var errorBody = await SafeReadStringAsync(resp) ?? "Erro desconhecido ao eliminar a vaga.";
+                TempData["DeleteError"] = $"Não foi possível eliminar a vaga (HTTP {(int)resp.StatusCode}): {errorBody}";
                 return RedirectToAction(nameof(Delete), new { id });
+            }
 
             return RedirectToAction(nameof(Index));
         }

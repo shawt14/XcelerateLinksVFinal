@@ -242,7 +242,16 @@ namespace APIPSI16.Controllers
                 h.OpportunityId = null;
 
             _context.Opportunities.Remove(opportunity);
-            await _context.SaveChangesAsync();
+
+            try
+            {
+                await _context.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to delete opportunity {OpportunityId}.", id);
+                return StatusCode(500, $"Erro ao eliminar a vaga: {ex.Message}");
+            }
 
             return NoContent();
         }

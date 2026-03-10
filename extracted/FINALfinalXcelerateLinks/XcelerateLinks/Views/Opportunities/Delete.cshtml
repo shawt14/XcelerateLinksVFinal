@@ -5,6 +5,11 @@
 
 <h2 class="mb-3">Eliminar oportunidade</h2>
 
+@if (TempData["DeleteError"] != null)
+{
+    <div class="alert alert-danger">@TempData["DeleteError"]</div>
+}
+
 <p>Tem a certeza que deseja eliminar esta oportunidade?</p>
 
 <dl class="row">

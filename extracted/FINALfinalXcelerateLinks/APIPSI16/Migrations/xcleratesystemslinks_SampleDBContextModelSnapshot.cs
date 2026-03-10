@@ -291,12 +291,19 @@ namespace APIPSI16.Migrations
                     b.Property<string>("Notes")
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<bool>("IsDiscarded")
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false);
+
                     b.Property<int?>("OpportunityId")
                         .HasColumnType("int");
 
                     b.Property<string>("Outcome")
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
+
+                    b.Property<int?>("PriorityId")
+                        .HasColumnType("int");
 
                     b.Property<string>("StageReached")
                         .HasColumnType("nvarchar(max)");

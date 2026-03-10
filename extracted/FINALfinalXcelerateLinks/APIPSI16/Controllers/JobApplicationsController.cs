@@ -598,24 +598,22 @@ namespace APIPSI16.Controllers
                 var opportunity = await _db.Opportunities.FindAsync(opportunityId);
                 if (opportunity == null) return;
 
-                // 1. Delete interview rounds for all applications on this opportunity
-                var applicationIds = await _db.JobApplications
+                // 1. Delete interview rounds for all applications on this opportunity.
+                // Use an IQueryable subquery for Contains so EF Core emits SQL IN (SELECT ...)
+                // instead of OPENJSON, which fails on SQL Server compat-level < 130.
+                var appIdsQuery = _db.JobApplications
                     .Where(a => a.OpportunityId == opportunityId)
-                    .Select(a => a.JobApplicationId)
+                    .Select(a => a.JobApplicationId);
+
+                var rounds = await _db.InterviewRounds
+                    .Where(r => appIdsQuery.Contains(r.JobApplicationId))
                     .ToListAsync();
+                _db.InterviewRounds.RemoveRange(rounds);
 
-                if (applicationIds.Count > 0)
-                {
-                    var rounds = await _db.InterviewRounds
-                        .Where(r => applicationIds.Contains(r.JobApplicationId))
-                        .ToListAsync();
-                    _db.InterviewRounds.RemoveRange(rounds);
-
-                    var applications = await _db.JobApplications
-                        .Where(a => a.OpportunityId == opportunityId)
-                        .ToListAsync();
-                    _db.JobApplications.RemoveRange(applications);
-                }
+                var applications = await _db.JobApplications
+                    .Where(a => a.OpportunityId == opportunityId)
+                    .ToListAsync();
+                _db.JobApplications.RemoveRange(applications);
 
                 // 2. Null-out OpportunityId on employer candidate history rows
                 var histories = await _db.EmployerCandidateHistories

@@ -213,26 +213,25 @@ namespace APIPSI16.Controllers
                     return StatusCode(403, "Não tens permissão para eliminar esta vaga.");
             }
 
-            // Cascade-delete child records that would block the FK constraint
+            // Cascade-delete child records that would block the FK constraint.
+            // Use an IQueryable subquery for Contains so EF Core emits a SQL IN (SELECT ...)
+            // instead of OPENJSON, which fails on SQL Server databases with compat-level < 130.
+
             // 1. Remove interview rounds for every job application on this opportunity
-            var applicationIds = await _context.JobApplications
+            var appIdsQuery = _context.JobApplications
                 .Where(a => a.OpportunityId == id)
-                .Select(a => a.JobApplicationId)
+                .Select(a => a.JobApplicationId);
+
+            var rounds = await _context.InterviewRounds
+                .Where(r => appIdsQuery.Contains(r.JobApplicationId))
                 .ToListAsync();
+            _context.InterviewRounds.RemoveRange(rounds);
 
-            if (applicationIds.Count > 0)
-            {
-                var rounds = await _context.InterviewRounds
-                    .Where(r => applicationIds.Contains(r.JobApplicationId))
-                    .ToListAsync();
-                _context.InterviewRounds.RemoveRange(rounds);
-
-                // 2. Remove the job applications themselves
-                var applications = await _context.JobApplications
-                    .Where(a => a.OpportunityId == id)
-                    .ToListAsync();
-                _context.JobApplications.RemoveRange(applications);
-            }
+            // 2. Remove the job applications themselves
+            var applications = await _context.JobApplications
+                .Where(a => a.OpportunityId == id)
+                .ToListAsync();
+            _context.JobApplications.RemoveRange(applications);
 
             // 3. Null-out the OpportunityId on any employer candidate history rows
             var histories = await _context.EmployerCandidateHistories

@@ -106,7 +106,16 @@ namespace XcelerateLinks.Mvc.Controllers
         }
 
         public async Task<IActionResult> Browse(string? q = null, int? locationId = null, byte? employmentType = null, byte? remoteOption = null)
-            => await Index(q, locationId, employmentType, remoteOption);
+        {
+            if (!await ValidateSessionAsync())
+                return RedirectToAction("Login", "Account");
+
+            // Admins should always use the management table (Index), never the user-facing Browse view.
+            if (IsAdmin())
+                return RedirectToAction(nameof(Index));
+
+            return await Index(q, locationId, employmentType, remoteOption);
+        }
 
         public async Task<IActionResult> Details(int id)
         {
@@ -217,7 +226,10 @@ namespace XcelerateLinks.Mvc.Controllers
                 return View(model);
             }
 
-            return RedirectToAction(nameof(Details), new { id });
+            // Admins return to the management table; others see the details page.
+            return IsAdmin()
+                ? RedirectToAction(nameof(Index))
+                : RedirectToAction(nameof(Details), new { id });
         }
 
         [HttpGet]

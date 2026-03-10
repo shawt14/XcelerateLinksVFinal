@@ -41,7 +41,7 @@
 </style>
 
 <div class="container py-4">
-    <a asp-action="Browse" class="btn btn-sm btn-outline-secondary mb-4">← Voltar às oportunidades</a>
+    <a asp-action="@(isAdmin ? "Index" : "Browse")" class="btn btn-sm btn-outline-secondary mb-4">← Voltar às oportunidades</a>
 
     <div class="job-detail-header">
         <div class="job-detail-logo">🏢</div>

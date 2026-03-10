@@ -66,7 +66,8 @@ namespace XcelerateLinks.Mvc.Controllers
             if (!string.IsNullOrWhiteSpace(q))
                 opportunitiesWithMatch = opportunitiesWithMatch.Where(o =>
                     (o.Title ?? "").Contains(q, StringComparison.OrdinalIgnoreCase) ||
-                    (o.LocationName ?? o.Location ?? "").Contains(q, StringComparison.OrdinalIgnoreCase)).ToList();
+                    (o.LocationName ?? o.Location ?? "").Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                    (o.CompanyName ?? "").Contains(q, StringComparison.OrdinalIgnoreCase)).ToList();
 
             if (locationId.HasValue)
                 opportunitiesWithMatch = opportunitiesWithMatch

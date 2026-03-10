@@ -5,6 +5,8 @@
     var company = ViewBag.Company as APIPSI16.Models.Company ?? Model;
     var opps = ViewBag.CompanyOpportunities as List<APIPSI16.Models.Opportunity> ?? new List<APIPSI16.Models.Opportunity>();
     var isAdmin = User.FindFirst(ClaimTypes.Role)?.Value == "0";
+    var isEmployer = User.FindFirst(ClaimTypes.Role)?.Value == "2";
+    var canDeleteOpportunity = isAdmin || isEmployer;
     var initial = !string.IsNullOrEmpty(company.Name) ? company.Name[0].ToString().ToUpper() : "?";
 
     var statusLabels = new Dictionary<byte, (string label, string color)>
@@ -124,7 +126,7 @@
                         <div class="opp-row-actions">
                             <a asp-controller="Applications" asp-action="Pipeline" asp-route-companyId="@company.CompanyId" asp-route-opportunityId="@opp.Id" class="btn-sm-blue">Pipeline</a>
                             <a asp-controller="Opportunities" asp-action="Edit" asp-route-id="@opp.Id" class="btn-sm-outline">Editar</a>
-                            @if (isAdmin)
+                            @if (canDeleteOpportunity)
                             {
                                 <a asp-controller="Opportunities" asp-action="Delete" asp-route-id="@opp.Id" class="btn-sm-danger">Eliminar</a>
                             }

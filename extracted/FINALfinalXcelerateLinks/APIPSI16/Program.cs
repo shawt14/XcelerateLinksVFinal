@@ -259,6 +259,40 @@ using (var scope = app.Services.CreateScope())
             logger.LogError(migEx, "Failed to apply database migrations. The application will continue but may have schema issues.");
         }
 
+        // Safety-net: ensure IsDiscarded and PriorityId columns exist on EmployerCandidateHistory.
+        // This is needed because most migrations in this project are missing the [Migration] attribute
+        // and were applied manually, so __EFMigrationsHistory may not reflect their state. The raw
+        // SQL check below is idempotent and guarantees the columns exist regardless of EF history.
+        // TODO: Remove this block once the migration history is fully in sync (all migrations have
+        //       the [Migration] attribute and __EFMigrationsHistory is up to date).
+        try
+        {
+            var conn = ctx.Database.GetDbConnection();
+            if (conn.State != System.Data.ConnectionState.Open)
+                conn.Open();
+
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = @"
+IF NOT EXISTS (
+    SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_NAME = 'EmployerCandidateHistory' AND COLUMN_NAME = 'IsDiscarded'
+)
+    ALTER TABLE EmployerCandidateHistory ADD IsDiscarded bit NOT NULL DEFAULT 0;
+
+IF NOT EXISTS (
+    SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_NAME = 'EmployerCandidateHistory' AND COLUMN_NAME = 'PriorityId'
+)
+    ALTER TABLE EmployerCandidateHistory ADD PriorityId int NULL;
+";
+            cmd.ExecuteNonQuery();
+            logger.LogInformation("EmployerCandidateHistory schema columns verified/applied.");
+        }
+        catch (Exception schemaEx)
+        {
+            logger.LogError(schemaEx, "Failed to verify/apply EmployerCandidateHistory schema columns.");
+        }
+
         logger.LogInformation("=== Startup complete ===");
     }
     catch (Exception ex)

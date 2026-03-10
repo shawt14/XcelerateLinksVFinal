@@ -63,15 +63,7 @@ namespace APIPSI16.Controllers
         [HttpGet]
         public async Task<IActionResult> GetOpportunities()
         {
-            // Exclude opportunities that already have a hired (accepted) applicant (status = 4)
-            var acceptedOpportunityIds = await _context.JobApplications
-                .Where(a => a.Status == 4)
-                .Select(a => a.OpportunityId)
-                .Distinct()
-                .ToListAsync();
-
             var opportunities = await _context.Opportunities
-                .Where(o => !acceptedOpportunityIds.Contains(o.Id))
                 .Select(o => new
                 {
                     o.Id,
@@ -253,7 +245,7 @@ namespace APIPSI16.Controllers
                 .Include(o => o.Company)
                 .Include(o => o.LocationNav)
                     .ThenInclude(l => l != null ? l.Country : null)
-                .Where(o => !o.JobApplications.Any(a => a.Status == 4))
+                .Where(o => !_context.JobApplications.Any(a => a.OpportunityId == o.Id && a.Status == (byte)4))
                 .ToListAsync();
 
             var userPrefIds = await _context.UserJobPreferences

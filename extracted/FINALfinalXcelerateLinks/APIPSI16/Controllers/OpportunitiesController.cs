@@ -91,7 +91,7 @@ namespace APIPSI16.Controllers
             var opportunity = await _context.Opportunities
                 .Include(o => o.Company)
                 .Include(o => o.LocationNav)
-                    .ThenInclude(l => l != null ? l.Country : null)
+                    .ThenInclude(l => l!.Country)
                 .FirstOrDefaultAsync(o => o.Id == id);
 
             if (opportunity == null) return NotFound();
@@ -197,15 +197,49 @@ namespace APIPSI16.Controllers
             {
                 if (!currentUserId.HasValue) return Unauthorized();
 
-                if (!opportunity.CompanyId.HasValue)
+                // Allow if the employer is the creator of the opportunity
+                bool isCreator = opportunity.CreatorId.HasValue && opportunity.CreatorId.Value == currentUserId.Value;
+
+                // Allow if the employer is an active member (Role >= 1) of the company that owns the opportunity
+                bool isActiveMember = false;
+                if (opportunity.CompanyId.HasValue)
+                {
+                    var member = await _context.CompanyMembers
+                        .FirstOrDefaultAsync(cm => cm.CompanyId == opportunity.CompanyId.Value && cm.UserId == currentUserId.Value);
+                    isActiveMember = member != null && member.Role >= 1;
+                }
+
+                if (!isCreator && !isActiveMember)
                     return StatusCode(403, "Não tens permissão para eliminar esta vaga.");
-
-                var member = await _context.CompanyMembers
-                    .FirstOrDefaultAsync(cm => cm.CompanyId == opportunity.CompanyId.Value && cm.UserId == currentUserId.Value);
-
-                if (member == null || member.Role < 1)
-                    return StatusCode(403, "Não tens permissão para eliminar vagas desta empresa.");
             }
+
+            // Cascade-delete child records that would block the FK constraint
+            // 1. Remove interview rounds for every job application on this opportunity
+            var applicationIds = await _context.JobApplications
+                .Where(a => a.OpportunityId == id)
+                .Select(a => a.JobApplicationId)
+                .ToListAsync();
+
+            if (applicationIds.Count > 0)
+            {
+                var rounds = await _context.InterviewRounds
+                    .Where(r => applicationIds.Contains(r.JobApplicationId))
+                    .ToListAsync();
+                _context.InterviewRounds.RemoveRange(rounds);
+
+                // 2. Remove the job applications themselves
+                var applications = await _context.JobApplications
+                    .Where(a => a.OpportunityId == id)
+                    .ToListAsync();
+                _context.JobApplications.RemoveRange(applications);
+            }
+
+            // 3. Null-out the OpportunityId on any employer candidate history rows
+            var histories = await _context.EmployerCandidateHistories
+                .Where(h => h.OpportunityId == id)
+                .ToListAsync();
+            foreach (var h in histories)
+                h.OpportunityId = null;
 
             _context.Opportunities.Remove(opportunity);
             await _context.SaveChangesAsync();

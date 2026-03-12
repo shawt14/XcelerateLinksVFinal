@@ -80,6 +80,28 @@ namespace XcelerateLinks.Mvc.Controllers
                     ModelState.AddModelError(string.Empty, "Erro ao obter token.");
                     return View(model);
                 }
+                // ── Token Storage — two-layer strategy ───────────────────────────────────
+                //
+                // The API returns a signed JWT in the JSON response body.
+                // The MVC front-end then stores it in TWO places:
+                //
+                //  1. An HttpOnly browser cookie  ("ApiAccessToken")
+                //     — used to forward the raw JWT to the REST API on every HTTP call.
+                //     — HttpOnly means JavaScript cannot read it (XSS protection).
+                //     — Secure=true on HTTPS connections (prevents interception over HTTP).
+                //
+                //  2. ASP.NET Core cookie authentication (via SignInAsync)
+                //     — stores a trimmed set of claims (userId, username, role) that the
+                //       MVC layer uses for [Authorize] checks and User.FindFirst(...) calls.
+                //     — This is a separate, encrypted .AspNetCore.Cookies cookie.
+                //     — Does NOT store the full JWT; that lives only in "ApiAccessToken".
+                //
+                // A matching server-side record is also written to the Sessions SQL table
+                // (via _sessionService.CreateSessionAsync) so that the server can revoke
+                // a session immediately without waiting for the cookie to expire.
+                // ─────────────────────────────────────────────────────────────────────────
+
+                // Parse the JWT to extract claims embedded by the API (userId, username, role).
                 var jwtHandler = new JwtSecurityTokenHandler();
                 var token = jwtHandler.ReadJwtToken(authResponse.Token);
                 var userIdClaim = token.Claims.FirstOrDefault(c => c.Type == ClaimTypes.NameIdentifier)?.Value;
@@ -92,18 +114,32 @@ namespace XcelerateLinks.Mvc.Controllers
                     return View(model);
                 }
 
+                // Server side: invalidate any existing session for this user, then create a
+                // new one. This ensures only one active session exists at a time (single-device
+                // policy). The raw JWT string is stored in the Sessions table alongside its
+                // expiry so the server can validate or revoke it on each request.
                 await _sessionService.InvalidateAllUserSessionsAsync(userId);
                 var expiresAt = DateTimeOffset.UtcNow.AddHours(1).DateTime;
                 await _sessionService.CreateSessionAsync(userId, authResponse.Token, expiresAt);
+
+                // Client side — STORAGE #1: HttpOnly cookie named "ApiAccessToken".
+                // This cookie carries the raw JWT to the browser. Every subsequent MVC
+                // request includes it automatically; TokenHandler reads it and adds it as
+                // an Authorization: Bearer header on outbound calls to the REST API.
                 var cookieOptions = new CookieOptions
                 {
-                    HttpOnly = true,
-                    Secure = Request.IsHttps,
-                    SameSite = SameSiteMode.Lax,
+                    HttpOnly = true,             // JavaScript cannot access this cookie
+                    Secure = Request.IsHttps,    // Send only over HTTPS when available
+                    SameSite = SameSiteMode.Lax, // Sent on same-site navigations; blocks CSRF from cross-origin POSTs
                     Expires = DateTimeOffset.UtcNow.AddHours(1)
                 };
                 Response.Cookies.Append(CookieName, authResponse.Token, cookieOptions);
 
+                // Client side — STORAGE #2: ASP.NET Core identity cookie (.AspNetCore.Cookies).
+                // SignInAsync serialises the claims below into an encrypted cookie so the
+                // MVC framework can hydrate User.Identity on each request without touching
+                // the database or re-parsing the JWT. This powers [Authorize] attributes and
+                // User.FindFirst(ClaimTypes.*) calls throughout all controllers.
                 var claims = new List<Claim>
                 {
                     new Claim(ClaimTypes.NameIdentifier, userIdClaim),

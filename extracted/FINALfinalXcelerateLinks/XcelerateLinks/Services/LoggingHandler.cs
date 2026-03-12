@@ -8,6 +8,49 @@ using System.Threading.Tasks;
 
 namespace XcelerateLinks.Mvc.Http
 {
+    // ── LoggingHandler — HttpClient delegating handler (HTTP pipeline middleware) ──
+    //
+    // ASP.NET Core has two distinct "pipeline" concepts:
+    //   1. The SERVER pipeline (app.Use*) — handles incoming requests from the browser.
+    //   2. The CLIENT pipeline (DelegatingHandler chain) — handles outgoing HTTP calls
+    //      made by HttpClient to the API backend.
+    //
+    // LoggingHandler is a component of the CLIENT pipeline. It is a DelegatingHandler,
+    // which is the HttpClient equivalent of middleware. Every outgoing API call made
+    // through the "Api" named HttpClient flows through this handler before the actual
+    // HTTP request is sent over the wire, and again after the response is received.
+    //
+    // WHAT IT DOES
+    // ------------
+    // On each outbound request it logs:
+    //   • The HTTP method and target URI (e.g., GET https://api/api/users/42)
+    //   • All request headers and content-type headers (DEBUG level)
+    //   • The full request body (INFO level)
+    // On each response it logs:
+    //   • The status code and reason phrase (e.g., 200 OK)
+    //   • All response headers (DEBUG level)
+    //   • The full response body (INFO level)
+    // If an exception is thrown it logs the error and re-throws.
+    //
+    // WHY IT EXISTS
+    // -------------
+    // Because the MVC site communicates with the REST API over HTTP, it can be hard to
+    // diagnose failures without seeing the raw request/response. This handler provides
+    // full request/response visibility in the application log during development and
+    // debugging without any changes to individual controllers or services.
+    //
+    // HANDLER CHAIN ORDER (registered in MVC Program.cs)
+    //   HttpClient "Api" outbound call
+    //     ──► TokenHandler   (attaches Authorization: Bearer header from cookie)
+    //     ──► LoggingHandler (logs request + response)
+    //     ──► Primary HttpClientHandler (sends the actual TCP request to the API)
+    //
+    // Note: LoggingHandler is registered with AddTransient<LoggingHandler>() but is NOT
+    // added to the "Api" HttpClient pipeline via .AddHttpMessageHandler<LoggingHandler>().
+    // It is available in the DI container but not yet wired into the handler chain.
+    // To enable full request/response logging, add .AddHttpMessageHandler<LoggingHandler>()
+    // to the builder.Services.AddHttpClient("Api", ...) call in MVC Program.cs.
+    // ─────────────────────────────────────────────────────────────────────────────
     public class LoggingHandler : DelegatingHandler
     {
         private readonly ILogger<LoggingHandler> _logger;

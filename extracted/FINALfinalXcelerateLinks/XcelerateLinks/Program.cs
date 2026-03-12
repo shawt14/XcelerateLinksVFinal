@@ -95,24 +95,77 @@ builder.Services.AddScoped<IFileStorageService, FileStorageService>();
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
+// ── Middleware pipeline (MVC — XcelerateLinks) ───────────────────────────────
+//
+// ASP.NET Core processes every HTTP request through an ordered chain of middleware.
+// Each app.Use*() call adds one link to that chain. The order is critical:
+// each middleware can only see/modify context state set by middleware registered
+// BEFORE it. The pipeline for this MVC site:
+//
+//   Request ──►
+//     [1] UseExceptionHandler / UseHsts   (Production only)
+//     [2] UseHttpsRedirection
+//     [3] UseStaticFiles
+//     [4] UseRouting
+//     [5] UseAuthentication
+//     [6] UseAuthorization
+//     [7] MapControllerRoute              ◄── MVC controller/view handlers
+//   ◄── Response
+//
+// ─────────────────────────────────────────────────────────────────────────────
 if (!app.Environment.IsDevelopment())
 {
+    // [1a] UseExceptionHandler — in Production, catches unhandled exceptions and
+    //      redirects to /Home/Error so the user sees a friendly error page instead
+    //      of a raw stack trace. In Development this is replaced by
+    //      UseDeveloperExceptionPage (implicitly added by CreateBuilder in dev).
     app.UseExceptionHandler("/Home/Error");
+
+    // [1b] UseHsts — sends the HTTP Strict-Transport-Security (HSTS) response header
+    //      which tells browsers to only ever connect via HTTPS for the next N days.
+    //      Only enabled in Production because localhost development uses plain HTTP.
     app.UseHsts();
 }
 
+// [2] UseHttpsRedirection — redirects plain HTTP requests to HTTPS.
+//     Ensures all communication with the MVC site is encrypted.
 app.UseHttpsRedirection();
+
+// [3] UseStaticFiles — serves CSS, JavaScript, images, and other files from
+//     the wwwroot folder directly, short-circuiting the pipeline.
+//     No authentication is required to access static assets.
 app.UseStaticFiles();
 
+// [4] UseRouting — analyses the incoming request URL and selects the matching
+//     endpoint (controller action). MUST come before UseAuthentication so the
+//     route is resolved before auth decisions are made.
 app.UseRouting();
 
+// [5] UseAuthentication — reads the encrypted ASP.NET Core cookie
+//     (.AspNetCore.Authentication.Cookies) that was set by AccountController.Login,
+//     decrypts it, and populates HttpContext.User with the stored Claims
+//     (NameIdentifier, Name, Role). MUST come after UseRouting and before
+//     UseAuthorization so that User is populated when authorization runs.
+//     Note: this is Cookie authentication (not JWT). The MVC site stores the
+//     user's identity in a server-encrypted cookie; the raw JWT is stored
+//     separately in the ApiAccessToken cookie and forwarded to the API by
+//     TokenHandler on every outbound HttpClient call.
 app.UseAuthentication();
+
+// [6] UseAuthorization — evaluates [Authorize] attributes on MVC controllers and
+//     actions using the ClaimsPrincipal populated in step [5].
+//     Unauthenticated users are redirected to /Account/Login (configured above
+//     in AddCookie → options.LoginPath).
 app.UseAuthorization();
 
+// [7] MapControllerRoute — registers the conventional MVC route pattern so that
+//     URLs like /Home/Index or /Account/Login map to the correct controller/action.
+//     This is the terminal middleware: it executes the controller and renders the
+//     Razor view response.
 app.MapControllerRoute(
     name: "default",
     pattern: "{controller=Home}/{action=Index}/{id?}");
+// ─────────────────────────────────────────────────────────────────────────────
 
 Console.WriteLine($"[MVC] Api BaseUrl = {apiBase}");
 

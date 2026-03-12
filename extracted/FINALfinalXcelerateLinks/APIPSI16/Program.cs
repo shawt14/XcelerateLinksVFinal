@@ -302,10 +302,38 @@ IF NOT EXISTS (
     }
 }
 
-// ---- Middleware pipeline ----
+// ── Middleware pipeline (API — APIPSI16) ─────────────────────────────────────
+//
+// ASP.NET Core processes every HTTP request through an ordered chain of middleware
+// components. The ORDER in which you call app.Use*() matters: each middleware
+// wraps all middleware registered after it. Think of it as nested Russian dolls —
+// the first registered runs first on the way IN and last on the way OUT.
+//
+// The pipeline for this API:
+//
+//   Request ──►
+//     [1] UseDeveloperExceptionPage / UseSwagger  (Development only)
+//     [2] UseHttpsRedirection
+//     [3] UseStaticFiles
+//     [4] UseCors
+//     [5] UseAuthentication
+//     [6] UseAuthorization
+//     [7] MapControllers / MapHub   ◄── actual endpoint handlers
+//   ◄── Response
+//
+// ─────────────────────────────────────────────────────────────────────────────
 if (app.Environment.IsDevelopment())
 {
+    // [1a] UseDeveloperExceptionPage — catches unhandled exceptions thrown anywhere
+    //      further down the pipeline and returns a full HTML stack trace to the
+    //      browser. Only active in Development; production uses a generic error page.
     app.UseDeveloperExceptionPage();
+
+    // [1b] UseSwagger / UseSwaggerUI — mounts the OpenAPI JSON document at
+    //      /swagger/v1/swagger.json and the Swagger interactive UI at /swagger.
+    //      Swagger lets you test API endpoints directly in the browser without a
+    //      separate client. Only available in Development to avoid exposing the
+    //      API surface in production.
     app.UseSwagger();
     app.UseSwaggerUI(c =>
     {
@@ -314,17 +342,60 @@ if (app.Environment.IsDevelopment())
     });
 }
 
+// [2] UseHttpsRedirection — if the client sends a plain HTTP request, this
+//     middleware redirects it to the equivalent HTTPS URL (301/307 redirect).
+//     Ensures all traffic is encrypted in transit. Must come early, before any
+//     middleware that reads request data, so the redirect happens before any
+//     sensitive data is processed over an unencrypted connection.
 app.UseHttpsRedirection();
+
+// [3] UseStaticFiles — serves files from the wwwroot folder (CSS, JS, images)
+//     directly without hitting any controller. Short-circuits the pipeline for
+//     matching paths so no auth check is applied to static assets.
 app.UseStaticFiles();
+
+// [4] UseCors — applies the "AllowMvcFrontend" CORS policy defined above.
+//     CORS (Cross-Origin Resource Sharing) controls which origins (domains) are
+//     allowed to call this API from a browser. Must come BEFORE UseAuthentication
+//     so that OPTIONS preflight requests are handled before auth middleware runs.
+//     Without this, browsers making cross-origin requests to this API would be
+//     blocked by the browser's same-origin policy.
 app.UseCors("AllowMvcFrontend");
 
+// [5] UseAuthentication — reads the Authorization: Bearer <JWT> header and
+//     validates the token signature, issuer, audience, and expiry using the
+//     TokenValidationParameters configured above. On success it populates
+//     HttpContext.User (the ClaimsPrincipal) with the claims from the token.
+//     MUST come before UseAuthorization so that User is populated before
+//     the authorization policy is evaluated.
 app.UseAuthentication();
+
+// [6] UseAuthorization — evaluates [Authorize] attributes on controllers and
+//     actions. Uses the ClaimsPrincipal populated by UseAuthentication to decide
+//     whether the current user has access to the requested resource.
+//     Returns 401 Unauthorized if the user is not authenticated, or 403 Forbidden
+//     if authenticated but not authorized (wrong role).
 app.UseAuthorization();
 
-// REMOVE: app.UseMiddleware<SessionValidationMiddleware>();
+// NOTE: SessionValidationMiddleware is currently NOT registered globally here.
+// Session cross-checking against the Sessions DB table is instead done explicitly
+// in each controller via ApiControllerBase.ValidateSessionAsync(). The class
+// still exists in /Middleware/SessionValidationMiddleware.cs and can be re-enabled
+// with app.UseMiddleware<SessionValidationMiddleware>() if global enforcement is
+// preferred. If re-enabled, it must be placed AFTER UseAuthentication (line [5]).
 
+// [7a] MapControllers — registers all [ApiController]-decorated controllers as
+//      routable endpoints. This is the terminal middleware: it matches the request
+//      URL to a controller action, executes it, and writes the response.
 app.MapControllers();
+
+// [7b] MapHub — registers the SignalR ChatHub at the /hubs/chat WebSocket endpoint.
+//      SignalR uses a persistent WebSocket connection (with HTTP long-polling as
+//      a fallback) to push real-time messages from the server to connected clients.
+//      The hub endpoint is handled after all other middleware so authentication
+//      and authorization are enforced on the WebSocket upgrade handshake as well.
 app.MapHub<APIPSI16.Hubs.ChatHub>("/hubs/chat");
+// ─────────────────────────────────────────────────────────────────────────────
 
 app.Logger.LogInformation("API is running. Listening on: {Urls}", urls);
 

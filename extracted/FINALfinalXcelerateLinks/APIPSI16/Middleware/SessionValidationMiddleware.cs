@@ -26,6 +26,13 @@ namespace APIPSI16.Middleware
                 return;
             }
 
+            // ClaimTypes.NameIdentifier is read from the HttpContext.User ClaimsPrincipal.
+            // By the time this middleware runs, the JWT bearer middleware has already
+            // validated the token signature and deserialized all embedded claims into
+            // context.User.Claims. FindFirst searches that collection for the claim whose
+            // Type property equals ClaimTypes.NameIdentifier (the long-form URI string),
+            // which corresponds to the "sub" (subject) field in the JWT payload.
+            // The resulting .Value is the UserId string embedded at login.
             var userIdClaim = context.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             var token = context.Request.Headers["Authorization"].ToString().Replace("Bearer ", "");
 

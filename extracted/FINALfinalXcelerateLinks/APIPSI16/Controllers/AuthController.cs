@@ -99,12 +99,37 @@ namespace APIPSI16.Controllers
                 _logger.LogInformation("Invalidated {Count} previous sessions for user {UserId}", previousSessions.Count, user.UserId);
             }
 
-            // Build claims (include role)
+            // ── Building application Claims ───────────────────────────────────────────
+            //
+            // A Claim is a key/value assertion about the user. These three claims are the
+            // application's identity payload; they will be embedded inside the JWT and
+            // read back on every subsequent authenticated API or MVC request via:
+            //   User.FindFirst(ClaimTypes.XYZ)?.Value
+            //
+            // ClaimTypes.Name            — the human-readable display name (full name or
+            //                              email used as fallback). Readable in views via
+            //                              User.Identity.Name or User.FindFirst(ClaimTypes.Name).
+            //
+            // ClaimTypes.NameIdentifier  — the user's numeric primary key (UserId) as a
+            //                              string. This is the claim all controllers use to
+            //                              identify WHICH user is making a request, e.g.:
+            //                                User.FindFirst(ClaimTypes.NameIdentifier)?.Value
+            //                              Note: JWT middleware also maps the short-form "sub"
+            //                              claim to ClaimTypes.NameIdentifier automatically.
+            //
+            // ClaimTypes.Role            — the user's role integer encoded as a string:
+            //                                "0" = Admin
+            //                                "1" = Regular user (default)
+            //                                "2" = Employer
+            //                              Used for coarse-grained access control:
+            //                                User.FindFirst(ClaimTypes.Role)?.Value == "0"
+            //                              and by [Authorize(Roles = "0")] if applied.
+            // ─────────────────────────────────────────────────────────────────────────
             var claims = new[]
             {
                 new Claim(ClaimTypes.Name, user.Name ?? user.Email ?? string.Empty),
                 new Claim(ClaimTypes.NameIdentifier, user.UserId.ToString()),
-                new Claim(ClaimTypes.Role, user.Role?.ToString() ?? "1") // 0=Admin, 1=User, default to User
+                new Claim(ClaimTypes.Role, user.Role?.ToString() ?? "1") // 0=Admin, 1=Regular, 2=Employer; default to Regular
             };
 
             // Wrap token creation to surface detailed errors in Development

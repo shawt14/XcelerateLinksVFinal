@@ -939,183 +939,285 @@
                 'Página': 'Page',
             };
 
+                    // ── Language / Translation System ──────────────────────────────────────────
+                    // The site is authored in Portuguese (PT). This system lets any logged-in
+                    // user toggle the entire visible page text to English (EN) without a page
+                    // reload and without any server-side localisation (.resx / IStringLocalizer).
+                    //
+                    // Three-tier translation priority (highest → lowest):
+                    //   1. PT_EN static dictionary  — hand-written ~500-entry map defined above
+                    //   2. translationCache          — strings translated via API in a previous
+                    //                                  session and persisted to localStorage
+                    //   3. MyMemory API              — live fallback for strings not in either tier
+
+                    // currentLang tracks whether the page is currently displayed in 'pt' or 'en'.
                     var currentLang = 'pt';
-            var saved = new Map();
-            var translationCache = new Map();
 
-            function loadCache() {
-                const cached = localStorage.getItem('translationCache_en');
-                if (cached) {
-                    try {
-                        const parsed = JSON.parse(cached);
-                        Object.keys(parsed).forEach(key => {
-                            translationCache.set(key, parsed[key]);
-                            // Static dictionary always takes priority over cached values
-                            if (!(key in PT_EN)) {
-                                PT_EN[key] = parsed[key];
+                    // saved: Map<DOM node | element, original string>
+                    //   Stores the *original* PT content of every node that has been swapped to EN.
+                    //   Used to restore originals instantly when switching back to PT (no network call).
+                    var saved = new Map();
+
+                    // translationCache: Map<ptString, enString>
+                    //   In-memory cache of strings fetched from the API during this or a previous
+                    //   session. Seeded from localStorage on page load so repeat visits are instant.
+                    var translationCache = new Map();
+
+                    // loadCache – called once on DOMContentLoaded.
+                    // Reads the JSON blob stored at localStorage key 'translationCache_en' and
+                    // populates both translationCache (in-memory) and PT_EN (static dictionary).
+                    // The static dictionary always wins: if PT_EN already has a key, the cached
+                    // value is not allowed to override it (prevents API drift from breaking known strings).
+                    function loadCache() {
+                        const cached = localStorage.getItem('translationCache_en');
+                        if (cached) {
+                            try {
+                                const parsed = JSON.parse(cached);
+                                Object.keys(parsed).forEach(key => {
+                                    translationCache.set(key, parsed[key]);
+                                    // Static dictionary always takes priority over cached values
+                                    if (!(key in PT_EN)) {
+                                        PT_EN[key] = parsed[key];
+                                    }
+                                });
+                            } catch (e) {
+                                console.warn('Failed to load translation cache');
                             }
-                        });
-                    } catch (e) {
-                        console.warn('Failed to load translation cache');
+                        }
                     }
-                }
-            }
 
-            function saveCache() {
-                const cacheObj = {};
-                translationCache.forEach((value, key) => {
-                    cacheObj[key] = value;
-                });
-                localStorage.setItem('translationCache_en', JSON.stringify(cacheObj));
-            }
+                    // saveCache – called at the end of every successful EN translation pass.
+                    // Serialises translationCache to a JSON string and writes it to localStorage
+                    // so that API-fetched translations survive page navigations and browser restarts.
+                    function saveCache() {
+                        const cacheObj = {};
+                        translationCache.forEach((value, key) => {
+                            cacheObj[key] = value;
+                        });
+                        localStorage.setItem('translationCache_en', JSON.stringify(cacheObj));
+                    }
 
+                    // batchTranslate – sends unknown strings to the free MyMemory translation API.
+                    //
+                    // Why batching?
+                    //   MyMemory has a ~500-character URL limit per request. Sending every string
+                    //   individually would be very slow (one HTTP round-trip per string). Instead,
+                    //   multiple strings are joined with the separator "\n---\n" into a single
+                    //   query, and the translated response is split back on "---" to recover
+                    //   per-string results. Chunks are capped at 400 chars (leaving headroom for
+                    //   URL-encoding overhead and the "---" separators themselves).
+                    //
+                    // Flow:
+                    //   texts → split into ≤400-char chunks → one API call per chunk →
+                    //   split translated response on "---" → map back to original strings →
+                    //   return { ptString: enString } for all inputs
                     async function batchTranslate(texts) {
-            if (texts.length === 0) return {};
+                        if (texts.length === 0) return {};
 
-            try {
-                // Split into chunks of max 400 chars to stay under the 500 char limit
-                const chunks = [];
-                let currentChunk = [];
-                let currentLength = 0;
+                        try {
+                            // Split into chunks of max 400 chars to stay under the 500 char limit
+                            const chunks = [];
+                            let currentChunk = [];
+                            let currentLength = 0;
 
-                texts.forEach(text => {
-                    if (currentLength + text.length + 5 > 400) {
-                        if (currentChunk.length > 0) {
-                            chunks.push(currentChunk);
-                            currentChunk = [];
-                            currentLength = 0;
-                        }
-                    }
-                    currentChunk.push(text);
-                    currentLength += text.length + 5;
-                });
+                            texts.forEach(text => {
+                                // +5 accounts for the '\n---\n' separator (5 chars) added between texts
+                                if (currentLength + text.length + 5 > 400) {
+                                    if (currentChunk.length > 0) {
+                                        chunks.push(currentChunk);
+                                        currentChunk = [];
+                                        currentLength = 0;
+                                    }
+                                }
+                                currentChunk.push(text);
+                                currentLength += text.length + 5;
+                            });
 
-                if (currentChunk.length > 0) {
-                    chunks.push(currentChunk);
-                }
-
-                const results = {};
-
-                // Translate each chunk
-                for (const chunk of chunks) {
-                    try {
-                        const response = await fetch('https://api.mymemory.translated.net/get?q=' + encodeURIComponent(chunk.join('\n---\n')) + '&langpair=pt|en');
-                        const data = await response.json();
-                        const translated = data.responseData.translatedText || '';
-
-                        const translatedLines = translated.split('---');
-                        chunk.forEach((text, idx) => {
-                            results[text] = (translatedLines[idx] || text).trim();
-                        });
-                    } catch (e) {
-                        console.warn('Chunk translation error:', e);
-                    }
-                }
-
-                return results;
-            } catch (e) {
-                console.warn('Batch translation error:', e);
-                return {};
-            }
-        }
-
-            async function applyLang(lang) {
-                if (lang === 'pt') {
-                    saved.forEach(function(origVal, node) {
-                        if (node.nodeType === 3) {
-                            node.textContent = origVal;
-                        } else if (node.tagName === 'INPUT' || node.tagName === 'TEXTAREA') {
-                            node.placeholder = origVal;
-                        }
-                    });
-                    saved.clear();
-                    document.documentElement.lang = 'pt-PT';
-                    localStorage.setItem('siteLang', 'pt');
-                } else {
-                    const walker = document.createTreeWalker(
-                        document.body,
-                        NodeFilter.SHOW_TEXT,
-                        {
-                            acceptNode: function(node) {
-                                const p = node.parentElement;
-                                if (!p) return NodeFilter.FILTER_REJECT;
-                                const tag = p.tagName;
-                                if (tag === 'SCRIPT' || tag === 'STYLE') return NodeFilter.FILTER_REJECT;
-                                if (p.id === 'langToggle' || p.id === 'themeToggle') return NodeFilter.FILTER_REJECT;
-                                return NodeFilter.FILTER_ACCEPT;
+                            // Push the last chunk even if it didn't hit the size limit
+                            if (currentChunk.length > 0) {
+                                chunks.push(currentChunk);
                             }
-                        }
-                    );
 
-                    const nodes = [];
-                    let n;
-                    while ((n = walker.nextNode())) {
-                        const text = n.textContent.trim();
-                        if (text.length > 0 && /\p{L}/u.test(text)) nodes.push(n);
+                            const results = {};
+
+                            // Translate each chunk with a single API call
+                            for (const chunk of chunks) {
+                                try {
+                                    // Join all strings in this chunk with '\n---\n' so the API
+                                    // translates them as one block. The translated response will
+                                    // contain '---' between the translated versions of each string.
+                                    const response = await fetch('https://api.mymemory.translated.net/get?q=' + encodeURIComponent(chunk.join('\n---\n')) + '&langpair=pt|en');
+                                    const data = await response.json();
+                                    const translated = data.responseData.translatedText || '';
+
+                                    // Split the single translated string back into per-item parts.
+                                    // If the API returns fewer segments than expected, fall back to
+                                    // the original (untranslated) text for that position.
+                                    const translatedLines = translated.split('---');
+                                    chunk.forEach((text, idx) => {
+                                        results[text] = (translatedLines[idx] || text).trim();
+                                    });
+                                } catch (e) {
+                                    console.warn('Chunk translation error:', e);
+                                }
+                            }
+
+                            return results;
+                        } catch (e) {
+                            console.warn('Batch translation error:', e);
+                            return {};
+                        }
                     }
 
-                    const textsToTranslate = [];
-                    nodes.forEach(node => {
-                        const original = node.textContent.trim();
-                        if (!PT_EN[original] && !translationCache.has(original)) {
-                            if (!textsToTranslate.includes(original)) {
-                                textsToTranslate.push(original);
+                    // applyLang – switches the entire visible page between Portuguese and English.
+                    //
+                    // Switching TO Portuguese ('pt'):
+                    //   No network call needed. Every DOM node that was swapped is stored in the
+                    //   `saved` Map with its original PT content. We iterate that Map and write the
+                    //   original values back, then clear `saved` so the page is back to its initial state.
+                    //
+                    // Switching TO English ('en'):
+                    //   1. A TreeWalker traverses every visible text node in <body>, skipping
+                    //      <script> and <style> content and the toggle buttons themselves.
+                    //   2. For each node, the system checks (in order):
+                    //        a) PT_EN static dictionary  — instant, no network
+                    //        b) translationCache          — instant, was fetched in a prior session
+                    //        c) Neither → added to textsToTranslate list for the API
+                    //   3. batchTranslate() is called once for all uncached strings.
+                    //   4. Every node is updated in the DOM. The original value is saved in `saved`
+                    //      so it can be restored on the next PT switch.
+                    //   5. input/textarea placeholders are also translated from PT_EN.
+                    //   6. saveCache() persists newly fetched translations to localStorage.
+                    async function applyLang(lang) {
+                        if (lang === 'pt') {
+                            // Restore every previously swapped node to its original PT value
+                            saved.forEach(function(origVal, node) {
+                                if (node.nodeType === 3) {
+                                    // Plain text node — restore textContent
+                                    node.textContent = origVal;
+                                } else if (node.tagName === 'INPUT' || node.tagName === 'TEXTAREA') {
+                                    // Form field — restore placeholder attribute
+                                    node.placeholder = origVal;
+                                }
+                            });
+                            saved.clear(); // All originals restored; reset for next EN pass
+                            document.documentElement.lang = 'pt-PT';
+                            localStorage.setItem('siteLang', 'pt');
+                        } else {
+                            // ── English path ──────────────────────────────────────────────────────
+
+                            // Step 1: Walk the entire DOM and collect visible text nodes.
+                            // NodeFilter.SHOW_TEXT limits the walker to text nodes only.
+                            // The acceptNode filter skips script/style content and the
+                            // toggle buttons (which must always show "EN" / "PT").
+                            const walker = document.createTreeWalker(
+                                document.body,
+                                NodeFilter.SHOW_TEXT,
+                                {
+                                    acceptNode: function(node) {
+                                        const p = node.parentElement;
+                                        if (!p) return NodeFilter.FILTER_REJECT;
+                                        const tag = p.tagName;
+                                        if (tag === 'SCRIPT' || tag === 'STYLE') return NodeFilter.FILTER_REJECT;
+                                        if (p.id === 'langToggle' || p.id === 'themeToggle') return NodeFilter.FILTER_REJECT;
+                                        return NodeFilter.FILTER_ACCEPT;
+                                    }
+                                }
+                            );
+
+                            // Collect all text nodes that contain at least one letter character
+                            // (\p{L} is a Unicode letter — filters out pure numbers/punctuation).
+                            const nodes = [];
+                            let n;
+                            while ((n = walker.nextNode())) {
+                                const text = n.textContent.trim();
+                                if (text.length > 0 && /\p{L}/u.test(text)) nodes.push(n);
                             }
+
+                            // Step 2: Identify strings not yet covered by the static dictionary
+                            // or the runtime cache — these will need an API call.
+                            const textsToTranslate = [];
+                            nodes.forEach(node => {
+                                const original = node.textContent.trim();
+                                if (!PT_EN[original] && !translationCache.has(original)) {
+                                    if (!textsToTranslate.includes(original)) {
+                                        textsToTranslate.push(original); // deduplicate
+                                    }
+                                }
+                            });
+
+                            // Step 3: Fetch translations for uncached strings (may be empty object if all cached).
+                            const translations = await batchTranslate(textsToTranslate);
+
+                            // Step 4: Apply translations to every collected text node.
+                            // Resolution order: API result → static dict → original (untranslated fallback).
+                            nodes.forEach(node => {
+                                const original = node.textContent.trim();
+                                const translated = translations[original] || PT_EN[original] || original;
+
+                                // Save the original before overwriting so PT restore works later
+                                if (!saved.has(node)) saved.set(node, node.textContent);
+                                node.textContent = node.textContent.replace(original, translated);
+
+                                // Warm up both caches for future lookups on this and other pages
+                                translationCache.set(original, translated);
+                                PT_EN[original] = translated;
+                            });
+
+                            // Step 5: Translate placeholder text of inputs and textareas.
+                            // These are attributes, not text nodes, so the TreeWalker misses them.
+                            document.querySelectorAll('input[placeholder], textarea[placeholder]').forEach(el => {
+                                const placeholder = el.getAttribute('placeholder');
+                                if (placeholder && PT_EN[placeholder]) {
+                                    if (!saved.has(el)) saved.set(el, placeholder); // save original
+                                    el.setAttribute('placeholder', PT_EN[placeholder]);
+                                }
+                            });
+
+                            // Step 6: Persist newly fetched API translations so future page loads
+                            // won't need to call the API again for the same strings.
+                            saveCache();
+                            document.documentElement.lang = 'en';
+                            localStorage.setItem('siteLang', 'en');
+                        }
+
+                        // Update the toggle button label: shows the *other* language (the one you'd switch to)
+                        var btn = document.getElementById('langToggle');
+                        if (btn) btn.textContent = lang === 'pt' ? 'EN' : 'PT';
+                        currentLang = lang;
+                    }
+
+                    // Bootstrap: runs once after the DOM is fully parsed.
+                    //   1. loadCache()  — seed PT_EN and translationCache from localStorage
+                    //   2. If the user previously chose EN, re-apply EN immediately (page was
+                    //      served in PT, so we must translate again on each navigation).
+                    //   3. Wire the langToggle button to call applyLang() on click.
+                    document.addEventListener('DOMContentLoaded', function() {
+                        loadCache();
+                        const savedLang = localStorage.getItem('siteLang');
+
+                        if (savedLang === 'en') {
+                            // User's last chosen language was EN — translate the page now.
+                            // Because loadCache() already populated PT_EN, most strings will
+                            // resolve from the cache without hitting the API.
+                            applyLang('en');
+                        } else {
+                            // Default: Portuguese. Just make sure the button shows "EN".
+                            currentLang = 'pt';
+                            const btn = document.getElementById('langToggle');
+                            if (btn) btn.textContent = 'EN';
+                        }
+
+                        // Wire the toggle button: clicking it switches to the opposite language.
+                        const btn = document.getElementById('langToggle');
+                        if (btn) {
+                            btn.addEventListener('click', async function() {
+                                const newLang = currentLang === 'pt' ? 'en' : 'pt';
+                                await applyLang(newLang);
+                            });
                         }
                     });
-
-                    const translations = await batchTranslate(textsToTranslate);
-
-                    nodes.forEach(node => {
-                        const original = node.textContent.trim();
-                        const translated = translations[original] || PT_EN[original] || original;
-
-                        if (!saved.has(node)) saved.set(node, node.textContent);
-                        node.textContent = node.textContent.replace(original, translated);
-
-                        translationCache.set(original, translated);
-                        PT_EN[original] = translated;
-                    });
-
-                    document.querySelectorAll('input[placeholder], textarea[placeholder]').forEach(el => {
-                        const placeholder = el.getAttribute('placeholder');
-                        if (placeholder && PT_EN[placeholder]) {
-                            if (!saved.has(el)) saved.set(el, placeholder);
-                            el.setAttribute('placeholder', PT_EN[placeholder]);
-                        }
-                    });
-
-                    saveCache();
-                    document.documentElement.lang = 'en';
-                    localStorage.setItem('siteLang', 'en');
-                }
-
-                var btn = document.getElementById('langToggle');
-                if (btn) btn.textContent = lang === 'pt' ? 'EN' : 'PT';
-                currentLang = lang;
-            }
-
-            document.addEventListener('DOMContentLoaded', function() {
-                loadCache();
-                const savedLang = localStorage.getItem('siteLang');
-
-                if (savedLang === 'en') {
-                    applyLang('en');
-                } else {
-                    currentLang = 'pt';
-                    const btn = document.getElementById('langToggle');
-                    if (btn) btn.textContent = 'EN';
-                }
-
-                const btn = document.getElementById('langToggle');
-                if (btn) {
-                    btn.addEventListener('click', async function() {
-                        const newLang = currentLang === 'pt' ? 'en' : 'pt';
-                        await applyLang(newLang);
-                    });
-                }
-            });
-        })();
+                })();
     </script>
 
 </body>
